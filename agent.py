@@ -1,10 +1,16 @@
+import logging
 from dotenv import load_dotenv
-from livekit import agents
-from livekit.agents import AgentSession, Agent, RoomInputOptions
-from livekit.plugins import (
-    noise_cancellation,
+import os
+from livekit.agents import (
+    Agent,
+    AgentSession,
+    JobContext,
+    JobProcess,
+    RoomInputOptions,
+    WorkerOptions,
+    cli,
 )
-from livekit.plugins import google
+from livekit.plugins import noise_cancellation, google, silero
 from prompts import AGENT_INSTRUCTION, SESSION_INSTRUCTION
 from tools import (
     get_weather, 
@@ -18,6 +24,8 @@ from tools import (
     delete_calendar_event_google,
     list_all_events_google
 )
+
+logger = logging.getLogger("agent")
 load_dotenv()
 
 class Assistant(Agent):
@@ -39,33 +47,52 @@ class Assistant(Agent):
         )
 
 
-async def entrypoint(ctx: agents.JobContext):
+def prewarm(proc: JobProcess):
+    pass
+
+
+async def entrypoint(ctx: JobContext):
+    ctx.log_context_fields = {
+        "room": ctx.room.name,
+    }
+    
+    # Verify API key is set (plugin reads from GOOGLE_API_KEY automatically)
+    google_api_key = os.getenv("GOOGLE_API_KEY")
+    
+    if not google_api_key:
+        logger.error("GOOGLE_API_KEY not found in environment")
+        raise ValueError(
+            "GOOGLE_API_KEY environment variable is required. "
+            "Get your API key from: https://aistudio.google.com/app/apikey"
+        )
+    
+    logger.info("Initializing Google Gemini Realtime session")
+    
+    # Use google.realtime.RealtimeModel (NOT google.beta.realtime)
+    # The plugin automatically reads GOOGLE_API_KEY from environment
     session = AgentSession(
-        llm=google.beta.realtime.RealtimeModel(
+        vad=silero.VAD.load(),
+        llm=google.realtime.RealtimeModel(
             model="gemini-2.0-flash-exp",
             voice="Charon",
             temperature=0.8,
-        ),
-    )
-
-    await session.start(
-        room=ctx.room,
-        agent=Assistant(),
-        room_input_options=RoomInputOptions(
-            # LiveKit Cloud enhanced noise cancellation
-            # - If self-hosting, omit this parameter
-            # - For telephony applications, use `BVCTelephony` for best results
-            video_enabled=False,
-            noise_cancellation=noise_cancellation.BVC(), 
+            instructions=SESSION_INSTRUCTION,  # Pass instructions here
         ),
     )
 
     await ctx.connect()
 
-    await session.generate_reply(
-        instructions=SESSION_INSTRUCTION,
+    await session.start(
+        agent=Assistant(),
+        room=ctx.room,
+        room_input_options=RoomInputOptions(
+            video_enabled=False,
+            noise_cancellation=noise_cancellation.BVC(),
+        ),
     )
 
+    # Optional initial greeting but agent can responds when you talk first
+    await session.generate_reply(instructions=SESSION_INSTRUCTION)
 
 if __name__ == "__main__":
-    agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=entrypoint))
+    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm))

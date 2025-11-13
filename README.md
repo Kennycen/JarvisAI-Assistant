@@ -127,7 +127,7 @@ A sophisticated AI personal assistant inspired by Tony Stark's J.A.R.V.I.S, buil
 1. **Activate the virtual environment**
 
    ```bash
-   source ai/bin/activate
+   source venv/bin/activate
    ```
 
 2. **Start the JARVIS agent**
