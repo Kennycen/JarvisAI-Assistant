@@ -1,8 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.sessions import SessionMiddleware  # Changed this line
+from starlette.middleware.sessions import SessionMiddleware
 from server.config import settings
 from server.routes import room, auth
+from server.services.supabase_service import SupabaseService
+import logging
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="JARVIS API",
@@ -39,6 +43,17 @@ async def root():
         "docs": "/docs",
         "health": "/api/health"
     }
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clean up resources on shutdown"""
+    try:
+        logger.info("Shutting down application...")
+        # Close Supabase client
+        await SupabaseService.close_client()
+        logger.info("Application shutdown complete")
+    except Exception as e:
+        logger.warning(f"Error during shutdown: {e}")
 
 if __name__ == "__main__":
     import uvicorn

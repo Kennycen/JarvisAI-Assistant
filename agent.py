@@ -1,6 +1,7 @@
 import logging
 from dotenv import load_dotenv
 import os
+from tools.room_context import set_current_room_name  # Use the module
 from livekit.agents import (
     Agent,
     AgentSession,
@@ -52,9 +53,14 @@ def prewarm(proc: JobProcess):
 
 
 async def entrypoint(ctx: JobContext):
+    # Store room name globally so tools can access it
+    set_current_room_name(ctx.room.name)
+    
     ctx.log_context_fields = {
         "room": ctx.room.name,
     }
+    
+    logger.info(f"Agent started for room: {ctx.room.name}")
     
     # Verify API key is set (plugin reads from GOOGLE_API_KEY automatically)
     google_api_key = os.getenv("GOOGLE_API_KEY")
@@ -92,7 +98,7 @@ async def entrypoint(ctx: JobContext):
     )
 
     # Optional initial greeting but agent can responds when you talk first
-    await session.generate_reply(instructions=SESSION_INSTRUCTION)
+    #await session.generate_reply(instructions=SESSION_INSTRUCTION)
 
 if __name__ == "__main__":
     cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm))

@@ -15,8 +15,3 @@ class RoomResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     timestamp: str
-
-# OAuth
-class AuthStatusResponse(BaseModel):
-    authenticated: bool
-    email: Optional[str] = None

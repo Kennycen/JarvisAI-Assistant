@@ -1,133 +1,184 @@
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from google_auth_oauthlib.flow import Flow
-from google.oauth2.credentials import Credentials
 import os
-import json
 import logging
+from typing import Dict, Any
 from server.config import settings
+from server.middleware.auth import get_current_user
+from server.services.supabase_service import SupabaseService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-SCOPES = ['https://www.googleapis.com/auth/calendar']
+SCOPES = [
+    'openid',
+    'https://www.googleapis.com/auth/userinfo.email',
+    'https://www.googleapis.com/auth/userinfo.profile',
+    'https://www.googleapis.com/auth/calendar',
+]
 
-@router.get("/google")
-async def google_auth(request: Request):
-    """Initiate Google OAuth flow"""
+
+def build_google_client_config(redirect_uri: str, state: str | None = None) -> Dict[str, Any]:
+    client_id = os.getenv("GOOGLE_CLIENT_ID")
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+
+    if not client_id or not client_secret:
+        raise HTTPException(status_code=500, detail="Google OAuth client env vars missing")
+
+    config = {
+        "web": {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "redirect_uris": [redirect_uri],
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+        }
+    }
+
+    flow = Flow.from_client_config(
+        config,
+        scopes=SCOPES,
+        redirect_uri=redirect_uri,
+        state=state,
+    )
+    return flow
+
+
+@router.get("/google/calendar")
+async def google_calendar_auth(
+    request: Request,
+    current_user: dict = Depends(get_current_user)
+):
+    """Initiate Google Calendar OAuth flow for authenticated user"""
     try:
-        # Allow HTTP for localhost development
         os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
-        
-        flow = Flow.from_client_secrets_file(
-            "credentials.json",
-            scopes=SCOPES,
-            redirect_uri=settings.OAUTH_REDIRECT_URI
-        )
-        
+        redirect_uri = "http://localhost:8000/api/auth/google/calendar/callback"
+
+        flow = build_google_client_config(redirect_uri)
         authorization_url, state = flow.authorization_url(
             access_type='offline',
             include_granted_scopes='true',
             prompt='consent'
         )
-        
-        # Store state in session
-        request.session['oauth_state'] = state
-        
-        return RedirectResponse(url=authorization_url)
-    except FileNotFoundError:
-        raise HTTPException(
-            status_code=500, 
-            detail="credentials.json not found. Please download from Google Cloud Console."
-        )
+
+        client = SupabaseService.get_client()
+        client.table("oauth_states").insert({
+            "state": state,
+            "user_id": current_user['user_id']
+        }).execute()
+
+        logger.info(f"Stored OAuth state {state} for user {current_user['user_id']}")
+
+        return JSONResponse({"authorization_url": authorization_url})
     except Exception as e:
         logger.error(f"OAuth initiation error: {e}")
         raise HTTPException(status_code=500, detail=f"OAuth error: {str(e)}")
 
-@router.get("/callback")
-async def oauth_callback(request: Request, code: str = None, state: str = None):
-    """Handle OAuth callback"""
+
+@router.get("/google/calendar/callback")
+async def google_calendar_callback(
+    request: Request,
+    code: str | None = None,
+    state: str | None = None
+):
+    """Handle Google Calendar OAuth callback"""
     if not code:
-        raise HTTPException(status_code=400, detail="Authorization code not provided")
-    
-    # Verify state
-    stored_state = request.session.get('oauth_state')
-    if not stored_state or state != stored_state:
-        raise HTTPException(status_code=400, detail="Invalid state parameter")
-    
-    try:
-        # Allow HTTP for localhost development
-        os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
-        
-        flow = Flow.from_client_secrets_file(
-            "credentials.json",
-            scopes=SCOPES,
-            redirect_uri=settings.OAUTH_REDIRECT_URI,
-            state=state
+        return RedirectResponse(
+            url=f"{settings.FRONTEND_URL}?calendar_auth=error&message=no_code"
         )
-        
-        # Get the full URL with query parameters
+
+    if not state:
+        return RedirectResponse(
+            url=f"{settings.FRONTEND_URL}?calendar_auth=error&message=no_state"
+        )
+
+    try:
+        client = SupabaseService.get_client()
+        state_response = client.table("oauth_states").select("*").eq("state", state).execute()
+
+        if not state_response.data:
+            logger.error(f"State {state} not found in database")
+            return RedirectResponse(
+                url=f"{settings.FRONTEND_URL}?calendar_auth=error&message=invalid_state"
+            )
+
+        state_data = state_response.data[0]
+        user_id = state_data['user_id']
+
+        client.table("oauth_states").delete().eq("state", state).execute()
+
+        logger.info(f"Verified OAuth state {state} for user {user_id}")
+
+    except Exception as e:
+        logger.error(f"Error verifying state: {e}")
+        return RedirectResponse(
+            url=f"{settings.FRONTEND_URL}?calendar_auth=error&message=state_verification_failed"
+        )
+
+    try:
+        os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+        redirect_uri = "http://localhost:8000/api/auth/google/calendar/callback"
+
+        flow = build_google_client_config(redirect_uri, state=state)
+
         full_url = str(request.url)
         flow.fetch_token(authorization_response=full_url)
         credentials = flow.credentials
-        
-        # Store credentials in session as JSON string
-        request.session['google_credentials'] = credentials.to_json()
-        
-        # Clear the state after successful auth
-        request.session.pop('oauth_state', None)
-        
-        # Redirect to frontend
-        return RedirectResponse(url=f"{settings.FRONTEND_URL}?auth=success")
-    except Exception as e:
-        logger.error(f"OAuth callback error: {e}")
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Authentication failed: {str(e)}"
+
+        credentials_json = credentials.to_json()
+        success = await SupabaseService.save_calendar_credentials(
+            user_id,
+            credentials_json
         )
 
-@router.get("/status")
-async def auth_status(request: Request):
-    """Check authentication status"""
-    credentials_json = request.session.get('google_credentials')
-    
-    if not credentials_json:
-        return JSONResponse({"authenticated": False})
-    
-    try:
-        # Parse JSON string safely
-        if isinstance(credentials_json, str):
-            credentials_dict = json.loads(credentials_json)
-        else:
-            credentials_dict = credentials_json
-            
-        credentials = Credentials.from_authorized_user_info(credentials_dict, SCOPES)
-        
-        # Try to get email from token info
-        email = None
-        try:
-            # Refresh token to get user info if needed
-            if credentials.expired and credentials.refresh_token:
-                from google.auth.transport.requests import Request as GoogleRequest
-                credentials.refresh(GoogleRequest())
-            
-            # Get email from token info (if available)
-            if hasattr(credentials, 'id_token') and credentials.id_token:
-                email = credentials.id_token.get('email')
-        except:
-            pass  # Email not available, that's okay
-        
-        return JSONResponse({
-            "authenticated": True,
-            "email": email
-        })
+        if not success:
+            return RedirectResponse(
+                url=f"{settings.FRONTEND_URL}?calendar_auth=error&message=save_failed"
+            )
+
+        return RedirectResponse(
+            url=f"{settings.FRONTEND_URL}?calendar_auth=success"
+        )
+
     except Exception as e:
-        logger.error(f"Error parsing credentials: {e}")
+        logger.error(f"OAuth callback error: {e}")
+        return RedirectResponse(
+            url=f"{settings.FRONTEND_URL}?calendar_auth=error&message={str(e)}"
+        )
+
+
+@router.get("/calendar/status")
+async def calendar_status(current_user: dict = Depends(get_current_user)):
+    """Check if user has calendar credentials"""
+    try:
+        credentials = await SupabaseService.get_calendar_credentials(
+            current_user['user_id']
+        )
+
+        if credentials:
+            return JSONResponse({
+                "authenticated": True,
+                "email": current_user.get('email')
+            })
+        else:
+            return JSONResponse({"authenticated": False})
+    except Exception as e:
+        logger.error(f"Error checking calendar status: {e}")
         return JSONResponse({"authenticated": False})
 
-@router.post("/logout")
-async def logout(request: Request):
-    """Logout and clear session"""
-    request.session.clear()
-    return JSONResponse({"status": "logged_out"})
+
+@router.post("/calendar/disconnect")
+async def disconnect_calendar(current_user: dict = Depends(get_current_user)):
+    """Disconnect calendar credentials"""
+    try:
+        client = SupabaseService.get_client()
+        client.table("calendar_credentials").delete().eq(
+            "user_id", current_user['user_id']
+        ).execute()
+
+        return JSONResponse({"status": "disconnected"})
+    except Exception as e:
+        logger.error(f"Error disconnecting calendar: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
