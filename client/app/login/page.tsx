@@ -1,39 +1,55 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 export default function Login() {
-  const { signInWithGoogle, signInWithMicrosoft } = useAuth();
-  const [loading, setLoading] = useState(false);
+  const { signInWithGoogle, signInWithMicrosoft, user, loading } = useAuth();
+  const [authLoading, setAuthLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
 
+  // Redirect to dashboard if already authenticated
+  useEffect(() => {
+    if (!loading && user) {
+      router.push("/dashboard");
+    }
+  }, [user, loading, router]);
+
   const handleGoogleSignIn = async () => {
     try {
-      setLoading(true);
+      setAuthLoading(true);
       setError(null);
       await signInWithGoogle();
     } catch (err: any) {
       setError(err.message);
-    } finally {
-      setLoading(false);
+      setAuthLoading(false);
     }
   };
 
   const handleMicrosoftSignIn = async () => {
     try {
-      setLoading(true);
+      setAuthLoading(true);
       setError(null);
       await signInWithMicrosoft();
     } catch (err: any) {
       setError(err.message);
-    } finally {
-      setLoading(false);
+      setAuthLoading(false);
     }
   };
+
+  if (loading || user) {
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center">
+        <div className="text-cyan-400 font-mono text-xl animate-pulse">
+          {loading ? "CHECKING AUTHENTICATION..." : "REDIRECTING..."}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-black flex items-center justify-center relative overflow-hidden">
@@ -51,9 +67,11 @@ export default function Login() {
       </div>
       <div className="relative z-10 w-full max-w-md">
         <div className="bg-black/90 border-2 border-cyan-400/50 rounded-lg p-8 glow-box backdrop-blur-sm">
-          <h1 className="text-4xl font-bold text-cyan-400 mb-2 font-mono tracking-widest text-center">
-            J.A.R.V.I.S
-          </h1>
+          <Link href="/" className="block text-center mb-6">
+            <h1 className="text-4xl font-bold text-cyan-400 mb-2 font-mono tracking-widest">
+              J.A.R.V.I.S
+            </h1>
+          </Link>
           <p className="text-cyan-300 text-center mb-8 font-mono">
             Sign in to access your AI assistant
           </p>
@@ -67,18 +85,18 @@ export default function Login() {
           <div className="space-y-4">
             <Button
               onClick={handleGoogleSignIn}
-              disabled={loading}
+              disabled={authLoading}
               className="w-full bg-cyan-500/20 border border-cyan-400 text-cyan-300 hover:bg-cyan-500/30 font-mono"
             >
-              {loading ? "Loading..." : "Continue with Google"}
+              {authLoading ? "Loading..." : "Continue with Google"}
             </Button>
 
             <Button
               onClick={handleMicrosoftSignIn}
-              disabled={loading}
+              disabled={authLoading}
               className="w-full bg-cyan-500/20 border border-cyan-400 text-cyan-300 hover:bg-cyan-500/30 font-mono"
             >
-              {loading ? "Loading..." : "Continue with Microsoft"}
+              {authLoading ? "Loading..." : "Continue with Microsoft"}
             </Button>
           </div>
 

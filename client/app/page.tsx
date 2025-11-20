@@ -1,155 +1,36 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import JarvisCore from "@/components/jarvis-core";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
-import UserProfile from "@/components/user-profile";
-import CalendarAuth from "@/components/calendar-auth";
-import SystemModal from "@/components/system-modal";
-import WeatherModal from "@/components/weather-modal";
-import StatusModal from "@/components/status-modal";
-import IntegrationModal from "@/components/integration-modal";
-import { createRoom } from "@/lib/api";
-import { connectToRoom, setupAudioHandlers } from "@/lib/livekit";
-import { Room } from "livekit-client";
-import api from "@/lib/api";
 
-export default function Home() {
+export default function LandingPage() {
   const { user, loading } = useAuth();
-  const [activeModal, setActiveModal] = useState<string | null>(null);
-  const [isConnected, setIsConnected] = useState(false);
-  const [isConnecting, setIsConnecting] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState("Disconnected");
-  const [room, setRoom] = useState<Room | null>(null);
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const [calendarConnected, setCalendarConnected] = useState(false);
-  const [calendarConnecting, setCalendarConnecting] = useState(false);
+  const router = useRouter();
 
-  // Check calendar status on mount
+  // Redirect authenticated users to dashboard
   useEffect(() => {
-    if (user) {
-      checkCalendarStatus();
+    if (!loading && user) {
+      router.push("/dashboard");
     }
-  }, [user]);
-
-  const checkCalendarStatus = async () => {
-    try {
-      const response = await api.get("/api/auth/calendar/status");
-      setCalendarConnected(response.data.authenticated);
-    } catch (error) {
-      console.error("Error checking calendar status:", error);
-      setCalendarConnected(false);
-    }
-  };
-
-  const handleCalendarConnect = async () => {
-    if (calendarConnected) {
-      setActiveModal("calendar");
-      return;
-    }
-
-    try {
-      setCalendarConnecting(true);
-      const response = await api.get("/api/auth/google/calendar");
-      window.location.href = response.data.authorization_url;
-    } catch (error) {
-      console.error("Error connecting Google Calendar:", error);
-      alert("Failed to connect Google Calendar. Please try again.");
-      setCalendarConnecting(false);
-    }
-  };
-
-  const handleConnect = async () => {
-    if (isConnected && room) {
-      try {
-        room.disconnect();
-        setRoom(null);
-        setIsConnected(false);
-        setConnectionStatus("Disconnected");
-      } catch (error) {
-        console.error("Disconnect error:", error);
-      }
-      return;
-    }
-
-    try {
-      setIsConnecting(true);
-      setConnectionStatus("Creating room...");
-
-      const { room_name, token, url } = await createRoom();
-
-      setConnectionStatus("Connecting to room...");
-
-      const newRoom = await connectToRoom(url, token);
-
-      if (audioRef.current) {
-        setupAudioHandlers(newRoom, audioRef.current);
-      }
-
-      await newRoom.localParticipant.setMicrophoneEnabled(true);
-
-      setRoom(newRoom);
-      setIsConnected(true);
-      setIsConnecting(false);
-      setConnectionStatus("Connected - Speak to JARVIS");
-    } catch (error: any) {
-      console.error("Connection error:", error);
-      setConnectionStatus(`Error: ${error.message}`);
-      setIsConnected(false);
-      setIsConnecting(false);
-    }
-  };
-
-  useEffect(() => {
-    return () => {
-      if (room) {
-        room.disconnect();
-      }
-    };
-  }, [room]);
-
-  useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get("calendar_auth") === "success") {
-      checkCalendarStatus();
-      window.history.replaceState({}, "", window.location.pathname);
-    }
-  }, []);
+  }, [user, loading, router]);
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-black flex items-center justify-center overflow-hidden">
+      <div className="min-h-screen bg-black flex items-center justify-center">
         <div className="text-cyan-400 font-mono text-xl animate-pulse">
-          INITIALIZING J.A.R.V.I.S...
-        </div>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-black flex items-center justify-center overflow-hidden">
-        <div className="text-center">
-          <h1 className="text-4xl font-bold text-cyan-400 mb-4 font-mono tracking-widest">
-            J.A.R.V.I.S
-          </h1>
-          <p className="text-cyan-300 mb-8">Authentication Required</p>
-          <Button
-            onClick={() => (window.location.href = "/login")}
-            className="bg-cyan-500/20 border border-cyan-400 text-cyan-300 hover:bg-cyan-500/30"
-          >
-            Sign In
-          </Button>
+          LOADING...
         </div>
       </div>
     );
   }
 
   return (
-    <div className="h-screen w-screen bg-black relative overflow-hidden">
+    <div className="min-h-screen bg-black text-white relative overflow-hidden">
       {/* Animated background grid */}
-      <div className="absolute inset-0 opacity-20 pointer-events-none">
+      <div className="absolute inset-0 opacity-10">
         <div
           className="absolute inset-0"
           style={{
@@ -162,181 +43,202 @@ export default function Home() {
         />
       </div>
 
-      {/* Top Header */}
-      <div className="absolute top-0 left-0 right-0 z-50 p-4 md:p-6 flex justify-between items-start">
-        <div className="flex flex-col gap-2">
-          <div className="text-cyan-400 font-mono text-xs md:text-sm">
-            {new Date().toLocaleDateString("en-US", {
-              weekday: "long",
-              year: "numeric",
-              month: "long",
-              day: "numeric",
-            })}
-          </div>
-          <div className="text-cyan-300 font-mono text-sm md:text-lg">
-            {new Date().toLocaleTimeString("en-US", {
-              hour: "2-digit",
-              minute: "2-digit",
-              second: "2-digit",
-            })}
-          </div>
-          {connectionStatus && (
-            <div
-              className={`text-xs font-mono mt-2 ${
-                isConnected
-                  ? "text-green-400"
-                  : isConnecting
-                  ? "text-yellow-400"
-                  : "text-cyan-400/60"
-              }`}
-            >
-              {connectionStatus}
+      {/* Navigation Bar */}
+      <nav className="relative z-50 border-b border-cyan-400/20 bg-black/50 backdrop-blur-sm">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center h-16">
+            <div className="flex items-center">
+              <h1 className="text-2xl font-bold text-cyan-400 font-mono tracking-widest">
+                J.A.R.V.I.S
+              </h1>
             </div>
-          )}
+            <div className="flex items-center gap-4">
+              <Link href="/login">
+                <Button className="bg-cyan-500/20 border border-cyan-400 text-cyan-300 hover:bg-cyan-500/30 font-mono">
+                  Sign In
+                </Button>
+              </Link>
+            </div>
+          </div>
         </div>
-        <div className="flex gap-2 md:gap-4 items-center flex-wrap">
-          <Button
-            onClick={handleCalendarConnect}
-            disabled={calendarConnecting}
-            className={`bg-cyan-500/20 border text-cyan-300 hover:bg-cyan-500/30 font-mono text-xs transition-all ${
-              calendarConnected
-                ? "border-green-400 bg-green-500/20 hover:bg-green-500/30"
-                : "border-cyan-400"
-            }`}
-          >
-            {calendarConnecting ? (
-              "CONNECTING..."
-            ) : calendarConnected ? (
-              <>
-                <span className="w-2 h-2 bg-green-400 rounded-full inline-block mr-2 animate-pulse" />
-                CALENDAR
-              </>
-            ) : (
-              "📅 CALENDAR"
-            )}
-          </Button>
-          <Button
-            onClick={() => setActiveModal("integration")}
-            className="bg-cyan-500/20 border border-cyan-400 text-cyan-300 hover:bg-cyan-500/30 font-mono text-xs"
-          >
-            INTEGRATIONS
-          </Button>
-          <UserProfile />
-        </div>
-      </div>
+      </nav>
 
-      {/* Center Core */}
-      <div className="h-full w-full flex items-center justify-center relative z-10">
-        <JarvisCore
-          onClick={handleConnect}
-          isConnected={isConnected}
-          isConnecting={isConnecting}
-        />
-      </div>
+      {/* Hero Section */}
+      <main className="relative z-10">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 sm:py-24 lg:py-32">
+          <div className="text-center">
+            {/* Main Heading */}
+            <h1 className="text-5xl sm:text-6xl lg:text-7xl font-bold mb-6">
+              <span className="text-cyan-400 font-mono tracking-widest">
+                J.A.R.V.I.S
+              </span>
+              <br />
+              <span className="text-white">AI Assistant</span>
+            </h1>
 
-      {/* Hidden audio element for LiveKit */}
-      <audio ref={audioRef} autoPlay className="hidden" />
+            {/* Subtitle */}
+            <p className="text-xl sm:text-2xl text-cyan-300/80 mb-8 max-w-3xl mx-auto font-mono">
+              Your intelligent voice-activated assistant powered by advanced AI.
+              Manage your calendar, send emails, search the web, and more.
+            </p>
 
-      {/* Modals positioned around the core - Fixed positioning */}
-      <div className="absolute inset-0 pointer-events-none z-20 overflow-visible">
-        {/* Top Modal - System Status */}
-        <div className="absolute top-20 left-1/2 -translate-x-1/2">
-          <SystemModal
-            isOpen={activeModal === "system"}
-            onClose={() => setActiveModal(null)}
-          />
-        </div>
-
-        {/* Left Modal - Weather */}
-        <div className="absolute left-4 md:left-8 top-1/2 -translate-y-1/2">
-          <WeatherModal
-            isOpen={activeModal === "weather"}
-            onClose={() => setActiveModal(null)}
-          />
-        </div>
-
-        {/* Right Modal - Status */}
-        <div className="absolute right-4 md:right-8 top-1/2 -translate-y-1/2">
-          <StatusModal
-            isOpen={activeModal === "status"}
-            onClose={() => setActiveModal(null)}
-          />
-        </div>
-
-        
-      </div>
-
-      {/* Integration Modal (centered overlay) */}
-      <IntegrationModal
-        isOpen={activeModal === "integration"}
-        onClose={() => setActiveModal(null)}
-        onOpenModal={(modal) => setActiveModal(modal)}
-      />
-
-      {/* Calendar Modal (centered overlay) */}
-      {activeModal === "calendar" && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-auto">
-          <div
-            className="absolute inset-0 bg-black/80 backdrop-blur-sm"
-            onClick={() => setActiveModal(null)}
-          />
-          <div className="relative w-full max-w-md mx-4 bg-black/95 border-2 border-cyan-400/50 rounded-lg p-8 glow-box">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-cyan-400 font-mono text-xl font-bold">
-                CALENDAR
-              </h2>
+            {/* CTA Buttons */}
+            <div className="flex flex-col sm:flex-row gap-4 justify-center items-center mb-16">
+              <Link href="/login">
+                <Button
+                  size="lg"
+                  className="bg-cyan-500/20 border-2 border-cyan-400 text-cyan-300 hover:bg-cyan-500/30 font-mono text-lg px-8 py-6 glow-box"
+                >
+                  Get Started
+                </Button>
+              </Link>
               <Button
-                onClick={() => setActiveModal(null)}
-                variant="ghost"
-                size="icon-sm"
-                className="text-cyan-400 hover:text-cyan-300"
+                size="lg"
+                variant="outline"
+                className="border-2 border-cyan-400/50 text-cyan-300 hover:bg-cyan-500/10 font-mono text-lg px-8 py-6"
+                onClick={() => {
+                  document
+                    .getElementById("features")
+                    ?.scrollIntoView({ behavior: "smooth" });
+                }}
               >
-                ×
+                Learn More
               </Button>
             </div>
-            <CalendarAuth />
+
+            {/* Visual Element - Jarvis Core Preview */}
+            <div className="flex justify-center mb-20">
+              <div className="relative w-64 h-64 sm:w-80 sm:h-80">
+                <div className="absolute inset-0 rounded-full bg-gradient-to-b from-cyan-500/30 to-blue-600/20 blur-3xl opacity-60" />
+                <div className="absolute inset-0 rounded-full border-4 border-cyan-400/50 animate-pulse" />
+                <div className="absolute inset-4 rounded-full border-2 border-cyan-400/30" />
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="text-center">
+                    <div className="text-3xl font-bold text-cyan-400 tracking-widest font-mono mb-2">
+                      J.A.R.V.I.S
+                    </div>
+                    <div className="h-0.5 w-32 mx-auto bg-gradient-to-r from-transparent via-cyan-400 to-transparent" />
+                    <div className="text-xs text-cyan-400/60 font-mono mt-2">
+                      ACTIVE
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
-      )}
 
-      {/* Navigation buttons around core */}
-      <div className="absolute inset-0 pointer-events-none z-30">
-        {/* Top button */}
-        <div className="absolute top-[20%] left-1/2 -translate-x-1/2">
-          <Button
-            onClick={() =>
-              setActiveModal(activeModal === "system" ? null : "system")
-            }
-            className="pointer-events-auto bg-cyan-500/10 border border-cyan-400/50 text-cyan-300 hover:bg-cyan-500/20 font-mono text-xs px-4 py-2"
-          >
-            SYSTEM
-          </Button>
-        </div>
+        {/* Features Section */}
+        <section
+          id="features"
+          className="py-20 sm:py-24 lg:py-32 border-t border-cyan-400/20"
+        >
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 className="text-4xl font-bold text-center mb-12 text-cyan-400 font-mono">
+              FEATURES
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+              {/* Feature 1 */}
+              <div className="bg-black/50 border border-cyan-400/20 rounded-lg p-6 hover:border-cyan-400/50 transition-all glow-box">
+                <div className="text-4xl mb-4">🎤</div>
+                <h3 className="text-xl font-bold text-cyan-400 mb-2 font-mono">
+                  Voice Interface
+                </h3>
+                <p className="text-cyan-300/70 text-sm">
+                  Natural voice interaction with real-time AI responses
+                </p>
+              </div>
 
-        {/* Left button */}
-        <div className="absolute left-[10%] top-1/2 -translate-y-1/2">
-          <Button
-            onClick={() =>
-              setActiveModal(activeModal === "weather" ? null : "weather")
-            }
-            className="pointer-events-auto bg-cyan-500/10 border border-cyan-400/50 text-cyan-300 hover:bg-cyan-500/20 font-mono text-xs px-4 py-2"
-          >
-            WEATHER
-          </Button>
-        </div>
+              {/* Feature 2 */}
+              <div className="bg-black/50 border border-cyan-400/20 rounded-lg p-6 hover:border-cyan-400/50 transition-all glow-box">
+                <div className="text-4xl mb-4">📅</div>
+                <h3 className="text-xl font-bold text-cyan-400 mb-2 font-mono">
+                  Calendar Management
+                </h3>
+                <p className="text-cyan-300/70 text-sm">
+                  Schedule and manage events with Google Calendar integration
+                </p>
+              </div>
 
-        {/* Right button */}
-        <div className="absolute right-[10%] top-1/2 -translate-y-1/2">
-          <Button
-            onClick={() =>
-              setActiveModal(activeModal === "status" ? null : "status")
-            }
-            className="pointer-events-auto bg-cyan-500/10 border border-cyan-400/50 text-cyan-300 hover:bg-cyan-500/20 font-mono text-xs px-4 py-2"
-          >
-            STATUS
-          </Button>
+              {/* Feature 3 */}
+              <div className="bg-black/50 border border-cyan-400/20 rounded-lg p-6 hover:border-cyan-400/50 transition-all glow-box">
+                <div className="text-4xl mb-4">📧</div>
+                <h3 className="text-xl font-bold text-cyan-400 mb-2 font-mono">
+                  Email Control
+                </h3>
+                <p className="text-cyan-300/70 text-sm">
+                  Send and manage emails through voice commands
+                </p>
+              </div>
+
+              {/* Feature 4 */}
+              <div className="bg-black/50 border border-cyan-400/20 rounded-lg p-6 hover:border-cyan-400/50 transition-all glow-box">
+                <div className="text-4xl mb-4">🔍</div>
+                <h3 className="text-xl font-bold text-cyan-400 mb-2 font-mono">
+                  Web Search
+                </h3>
+                <p className="text-cyan-300/70 text-sm">
+                  Search the web and get instant information
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* CTA Section */}
+        <section className="py-20 sm:py-24 lg:py-32 border-t border-cyan-400/20">
+          <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+            <h2 className="text-4xl font-bold mb-6 text-cyan-400 font-mono">
+              READY TO GET STARTED?
+            </h2>
+            <p className="text-xl text-cyan-300/80 mb-8 font-mono">
+              Experience the future of AI assistance. Sign in to access your
+              personal JARVIS dashboard.
+            </p>
+            <Link href="/login">
+              <Button
+                size="lg"
+                className="bg-cyan-500/20 border-2 border-cyan-400 text-cyan-300 hover:bg-cyan-500/30 font-mono text-lg px-8 py-6 glow-box"
+              >
+                Access Dashboard
+              </Button>
+            </Link>
+          </div>
+        </section>
+      </main>
+
+      {/* Footer */}
+      <footer className="relative z-10 border-t border-cyan-400/20 bg-black/50 backdrop-blur-sm">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <div className="flex flex-col md:flex-row justify-between items-center">
+            <div className="mb-4 md:mb-0">
+              <h3 className="text-xl font-bold text-cyan-400 font-mono tracking-widest">
+                J.A.R.V.I.S
+              </h3>
+              <p className="text-cyan-300/60 text-sm font-mono mt-2">
+                AI Assistant Platform
+              </p>
+            </div>
+            <div className="flex gap-6 text-sm text-cyan-300/60 font-mono">
+              <a href="#" className="hover:text-cyan-400 transition-colors">
+                Privacy
+              </a>
+              <a href="#" className="hover:text-cyan-400 transition-colors">
+                Terms
+              </a>
+              <a href="#" className="hover:text-cyan-400 transition-colors">
+                Contact
+              </a>
+            </div>
+          </div>
+          <div className="mt-8 pt-8 border-t border-cyan-400/10 text-center text-cyan-300/40 text-sm font-mono">
+            <p>
+              © {new Date().getFullYear()} JARVIS AI Assistant. All rights
+              reserved.
+            </p>
+          </div>
         </div>
-      </div>
+      </footer>
     </div>
   );
 }
