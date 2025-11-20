@@ -32,21 +32,21 @@ A sophisticated AI personal assistant inspired by Tony Stark's J.A.R.V.I.S, buil
    2. **Set up Python environment**
 
    
-   ## Create and activate virtual environment
+   ### Create and activate virtual environment
    python -m venv venv
    source venv/bin/activate  # On Windows: ai\Scripts\activate
 
-   ## Install Python dependencies
+   ### Install Python dependencies
    pip install -r requirements.txt
    3. **Set up Node.js environment**
 
-   ## Navigate to client directory
+   ### Navigate to client directory
    cd client
 
-   ## Install Node.js dependencies
+   ### Install Node.js dependencies
    npm install
 
-   ## Return to root directory
+   ### Return to root directory
    cd ..
    4. **Set up environment variables**
 
