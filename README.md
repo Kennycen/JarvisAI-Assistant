@@ -138,22 +138,22 @@ The JARVIS Assistant consists of 3 services that need to be running:
 #### Option 1: Run in Separate Terminals
 
 **Terminal 1 - Agent Service:**
-# Activate virtual environment
+#### Activate virtual environment
 source venv/bin/activate  # On Windows: ai\Scripts\activate
 
-# Start the JARVIS agent
+#### Start the JARVIS agent
 python agent.py dev
 
 **Terminal 2 - Server Service:**
 
-# Start the FastAPI server
+#### Start the FastAPI server
 uvicorn server.main:app --reload
 
 **Terminal 3 - Client Service:**
-# Navigate to client directory
+#### Navigate to client directory
 cd client
 
-# Start the Next.js development server
+#### Start the Next.js development server
 npm run dev
 
 ### Accessing the Application
