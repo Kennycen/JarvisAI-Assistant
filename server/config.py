@@ -1,39 +1,58 @@
-import os
-from dotenv import load_dotenv
+from pydantic_settings import BaseSettings
+from typing import List
+from functools import lru_cache
 
-load_dotenv()
-
-class Settings:
+class Settings(BaseSettings):
     # Supabase
-    SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
-    SUPABASE_ANON_KEY: str = os.getenv("SUPABASE_ANON_KEY", "")
-    SUPABASE_SERVICE_ROLE_KEY: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "")
+    SUPABASE_URL: str = ""
+    SUPABASE_ANON_KEY: str = ""
+    SUPABASE_SERVICE_ROLE_KEY: str = ""
+    DATABASE_URL: str = ""
+    SUPABASE_DB_PASSWORD: str = "" 
     
     # FastAPI
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
-    FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    SECRET_KEY: str = "your-secret-key-change-in-production"
+    FRONTEND_URL: str = "http://localhost:3000"
     
     # LiveKit
-    LIVEKIT_URL: str = os.getenv("LIVEKIT_URL", "")
-    LIVEKIT_API_KEY: str = os.getenv("LIVEKIT_API_KEY", "")
-    LIVEKIT_API_SECRET: str = os.getenv("LIVEKIT_API_SECRET", "")
+    LIVEKIT_URL: str = ""
+    LIVEKIT_API_KEY: str = ""
+    LIVEKIT_API_SECRET: str = ""
     
     # Gmail
-    GMAIL_USER: str = os.getenv("GMAIL_USER", "")
-    GMAIL_APP_PASSWORD: str = os.getenv("GMAIL_APP_PASSWORD", "")
+    GMAIL_USER: str = ""
+    GMAIL_APP_PASSWORD: str = ""
     
     # Google API
-    GOOGLE_API_KEY: str = os.getenv("GOOGLE_API_KEY", "")
-    GOOGLE_CLOUD_PROJECT_ID: str = os.getenv("GOOGLE_CLOUD_PROJECT_ID", "")
-    OAUTH_REDIRECT_URI: str = os.getenv("OAUTH_REDIRECT_URI", "http://localhost:8000/api/auth/google/calendar/callback")
-    CREDENTIALS_FILE: str = "credentials.json"
+    GOOGLE_API_KEY: str = ""
+    GOOGLE_CLOUD_PROJECT_ID: str = ""
+    GOOGLE_CLIENT_ID: str = ""  # Add missing field
+    GOOGLE_CLIENT_SECRET: str = ""  # Add missing field
+    OAUTH_REDIRECT_URI: str = "http://localhost:8000/api/auth/google/calendar/callback"
     
-    # CORS
-    CORS_ORIGINS: list = [
-        "http://localhost:5173",  # Vite dev server (old React)
+    CORS_ORIGINS: List[str] = [
         "http://localhost:3000",  # Next.js dev server
-        os.getenv("FRONTEND_URL", "http://localhost:3000"),  # Default to Next.js port
     ]
+    
+    # Logging
+    LOG_LEVEL: str = "INFO"
+    
+    model_config = {
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "case_sensitive": False,
+        "extra": "ignore",  # Ignore extra fields in .env that aren't in this class
+    }
+    
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Add FRONTEND_URL to CORS_ORIGINS if not already present
+        if self.FRONTEND_URL and self.FRONTEND_URL not in self.CORS_ORIGINS:
+            self.CORS_ORIGINS.append(self.FRONTEND_URL)
 
-settings = Settings()
+@lru_cache()
+def get_settings() -> Settings:
+    """Get cached settings instance"""
+    return Settings()
+
+settings = get_settings()

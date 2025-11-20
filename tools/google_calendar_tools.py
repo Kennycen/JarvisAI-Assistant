@@ -2,7 +2,7 @@ import os
 import logging
 import json
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Union
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -127,6 +127,64 @@ def parse_datetime_string(date_str: str, user_timezone: str = 'UTC') -> datetime
                 parsed = now + timedelta(hours=1)
         elif 'next week' in date_str_lower:
             parsed = parser.parse(date_str_lower, default=now + timedelta(days=7))
+        elif 'next' in date_str_lower:
+            # Handle "next [day of week]" patterns like "next Tuesday", "next Monday"
+            days_of_week = {
+                'monday': 0, 'mon': 0,
+                'tuesday': 1, 'tue': 1, 'tues': 1,
+                'wednesday': 2, 'wed': 2,
+                'thursday': 3, 'thu': 3, 'thur': 3, 'thurs': 3,
+                'friday': 4, 'fri': 4,
+                'saturday': 5, 'sat': 5,
+                'sunday': 6, 'sun': 6
+            }
+            
+            # Find the day of week in the string
+            target_day = None
+            for day_name, day_num in days_of_week.items():
+                if day_name in date_str_lower:
+                    target_day = day_num
+                    break
+            
+            if target_day is not None:
+                # Calculate days until next occurrence of that day
+                # Use date only (midnight) for calculation to avoid timezone issues
+                now_date_only = now.replace(hour=0, minute=0, second=0, microsecond=0)
+                current_day = now_date_only.weekday()  # Monday = 0, Sunday = 6
+                days_ahead = target_day - current_day
+                
+                # If the day has already passed this week OR it's today, get next week's occurrence
+                if days_ahead <= 0:
+                    days_ahead += 7
+                
+                # Calculate the target date (date only, no time)
+                target_date = now_date_only + timedelta(days=days_ahead)
+                
+                # Extract time if present
+                if any(time_word in date_str_lower for time_word in ['am', 'pm', ':', 'at']):
+                    # Try to parse time from the string
+                    time_part = date_str_lower.replace('next', '').strip()
+                    # Remove day name from time part
+                    for day_name in days_of_week.keys():
+                        time_part = time_part.replace(day_name, '').strip()
+                    
+                    if time_part:
+                        try:
+                            # Parse just the time part
+                            from dateutil import parser
+                            time_parsed = parser.parse(time_part, default=target_date)
+                            parsed = time_parsed
+                        except:
+                            # If time parsing fails, default to 9am
+                            parsed = target_date.replace(hour=9, minute=0, second=0, microsecond=0)
+                    else:
+                        parsed = target_date.replace(hour=9, minute=0, second=0, microsecond=0)
+                else:
+                    # Default to 9am if no time specified (but this will be reset to midnight in view function)
+                    parsed = target_date.replace(hour=9, minute=0, second=0, microsecond=0)
+            else:
+                # "next" without a day of week - use generic parser
+                parsed = parser.parse(date_str, default=now + timedelta(days=7))
         else:
             # Use dateutil parser with current time as default
             parsed = parser.parse(date_str, default=now)
@@ -290,16 +348,18 @@ async def add_calendar_event_google(
     - "create calendar event"
     
     Args:
-        title: Event title/name
-        date_time: Date and time (e.g., "tomorrow 2pm", "2024-01-15 14:30", "next Monday 10am")
-        duration: Event duration (e.g., "1 hour", "30 minutes", "2 hours")
-        description: Event description/details (optional, use empty string if not provided)
-        location: Event location (optional, use empty string if not provided)
-        attendees: Comma-separated email addresses of attendees (optional, use empty string if not provided)
+        title: Event title/name (required)
+        date_time: Date and time (required, e.g., "tomorrow 2pm", "2024-01-15 14:30", "next Monday 10am")
+        duration: Event duration (default: "1 hour", e.g., "30 minutes", "2 hours")
+        description: Event description/details (optional, default: empty string)
+        location: Event location (optional, default: empty string)
+        attendees: Comma-separated email addresses of attendees (optional, default: empty string)
     
     Sir expects immediate calendar execution when scheduling is requested.
     """
     try:
+        # Parameters already have defaults, no conversion needed
+        
         # Try multiple ways to get room name
         room_name = None
         
@@ -338,14 +398,12 @@ async def add_calendar_event_google(
             raise Exception("Calendar service not initialized. Check credentials.")
         
         print(f"🔍 DEBUG: Calendar manager initialized. User ID: {manager.user_id}")
-        print(f"🔍 DEBUG: User timezone: {manager.timezone}")
         
         # Parse date and time using user's timezone
         parsed_datetime = parse_datetime_string(date_time, manager.timezone)
         parsed_duration = parse_duration_string(duration)
         
         print(f"🔍 DEBUG: Parsed datetime: {parsed_datetime}, duration: {parsed_duration}")
-        print(f"🔍 DEBUG: Datetime timezone: {parsed_datetime.tzinfo}")
         
         # Calculate end time
         end_time = parsed_datetime + parsed_duration
@@ -368,22 +426,31 @@ async def add_calendar_event_google(
             event['description'] = description
         if location and location.strip():
             event['location'] = location
+        
+        # Handle attendees - only add if we have valid emails
         if attendees and attendees.strip():
             attendee_list = [email.strip() for email in attendees.split(',') if email.strip()]
-            event['attendees'] = [{'email': email} for email in attendee_list]
-        
-        print(f"🔍 DEBUG: Event data: {json.dumps(event, indent=2)}")
-        
+            # Only add attendees if we have at least one valid email
+            if attendee_list:
+                # Basic email validation - check for @ symbol
+                valid_emails = [email for email in attendee_list if '@' in email and '.' in email.split('@')[1] if '@' in email]
+                if valid_emails:
+                    event['attendees'] = [{'email': email} for email in valid_emails]
+                    print(f"🔍 DEBUG: Added {len(valid_emails)} attendees: {valid_emails}")
+                else:
+                    print(f"⚠️ WARNING: No valid email addresses found in attendees: {attendees}")
+            else:
+                print(f"🔍 DEBUG: No attendees to add (empty list after parsing)")
+                
         # Insert event
         print("🔍 DEBUG: Attempting to insert event into Google Calendar...")
         event_result = manager.service.events().insert(
             calendarId='primary',
             body=event,
-            sendUpdates='all' if attendees and attendees.strip() else 'none'
+            sendUpdates='all' if event.get('attendees') else 'none'  # Only send updates if we actually have attendees
         ).execute()
         
         print(f"📅 SUCCESS: Event created with ID {event_result['id']}")
-        print(f"🔍 DEBUG: Full event response: {json.dumps(event_result, indent=2)}")
         
         return f"Event '{title}' scheduled successfully in Google Calendar for {parsed_datetime.strftime('%B %d, %Y at %I:%M %p')}, Sir. Duration: {duration}."
         
@@ -424,14 +491,44 @@ async def add_calendar_event_google(
         # Parse date
         if date:
             target_date = parse_datetime_string(date, manager.timezone)
+            # For date queries, we only care about the date, not the time
+            # Reset to start of day in user's timezone
+            target_date = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
         else:
-            target_date = datetime.now(user_tz)
+            target_date = datetime.now(user_tz).replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        # Determine if this is a date range query
+        is_range_query = False
+        date_lower = date.lower().strip() if date else ""
+        
+        # Check for range queries FIRST, before single day logic
+        if 'next week' in date_lower:
+            is_range_query = True
+            # Calculate next Monday
+            current_day = target_date.weekday()  # Use target_date, not now
+            days_ahead = 7 - current_day  # Monday is 0
+            if days_ahead == 0:  # If target date is Monday, go to next Monday
+                days_ahead = 7
+            time_min = target_date + timedelta(days=days_ahead)
+            time_max = time_min + timedelta(days=7)  # 7 days for a week
+            range_description = f"next week (starting {time_min.strftime('%B %d')})"
+        elif 'this week' in date_lower:
+            is_range_query = True
+            # Start from Monday of current week
+            days_back = target_date.weekday()
+            time_min = target_date - timedelta(days=days_back)
+            time_max = time_min + timedelta(days=7)  # 7 days for a week
+            range_description = f"this week (starting {time_min.strftime('%B %d')})"
+        else:
+            # Single day query - use the date we parsed (already reset to midnight)
+            time_min = target_date
+            time_max = time_min + timedelta(days=1)
+            range_description = target_date.strftime('%B %d, %Y')
+        
+        # Add debug logging
+        print(f"🔍 DEBUG: Query date: {date}, Parsed: {target_date}, Range: {time_min} to {time_max}")
         
         # Set time range for the day (in user's timezone)
-        time_min = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
-        time_max = time_min + timedelta(days=1)
-        
-        # Convert to UTC for API call
         time_min_utc = time_min.astimezone(ZoneInfo('UTC'))
         time_max_utc = time_max.astimezone(ZoneInfo('UTC'))
         
@@ -448,7 +545,10 @@ async def add_calendar_event_google(
         events = events_result.get('items', [])
         
         if not events:
-            return f"No events found for {target_date.strftime('%B %d, %Y')}, Sir."
+            if is_range_query:
+                return f"No events found for {range_description}, Sir."
+            else:
+                return f"No events found for {range_description}, Sir."
         
         # Format events
         event_list = []
@@ -515,31 +615,42 @@ async def view_calendar_events_google(
         
         if date:
             target_date = parse_datetime_string(date, manager.timezone)
+            # For date queries, we only care about the date, not the time
+            # Reset to start of day in user's timezone
+            target_date = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
         else:
-            target_date = datetime.now(user_tz)
+            target_date = datetime.now(user_tz).replace(hour=0, minute=0, second=0, microsecond=0)
         
-        # Check for range queries
+        # Determine if this is a date range query
+        is_range_query = False
+        date_lower = date.lower().strip() if date else ""
+        
+        # Check for range queries FIRST, before single day logic
         if 'next week' in date_lower:
             is_range_query = True
             # Calculate next Monday
-            days_ahead = 7 - target_date.weekday()  # Monday is 0
-            if days_ahead == 0:  # If today is Monday, go to next Monday
+            current_day = target_date.weekday()  # Use target_date, not now
+            days_ahead = 7 - current_day  # Monday is 0
+            if days_ahead == 0:  # If target date is Monday, go to next Monday
                 days_ahead = 7
-            time_min = target_date.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=days_ahead)
+            time_min = target_date + timedelta(days=days_ahead)
             time_max = time_min + timedelta(days=7)  # 7 days for a week
             range_description = f"next week (starting {time_min.strftime('%B %d')})"
         elif 'this week' in date_lower:
             is_range_query = True
             # Start from Monday of current week
             days_back = target_date.weekday()
-            time_min = target_date.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=days_back)
+            time_min = target_date - timedelta(days=days_back)
             time_max = time_min + timedelta(days=7)  # 7 days for a week
             range_description = f"this week (starting {time_min.strftime('%B %d')})"
         else:
-            # Single day query (existing logic)
-            time_min = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
+            # Single day query - use the date we parsed (already reset to midnight)
+            time_min = target_date
             time_max = time_min + timedelta(days=1)
             range_description = target_date.strftime('%B %d, %Y')
+        
+        # Add debug logging
+        print(f"🔍 DEBUG: Query date: {date}, Parsed: {target_date}, Range: {time_min} to {time_max}")
         
         # Convert to UTC for API call
         time_min_utc = time_min.astimezone(ZoneInfo('UTC'))

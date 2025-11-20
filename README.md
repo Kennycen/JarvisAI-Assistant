@@ -17,6 +17,7 @@ A sophisticated AI personal assistant inspired by Tony Stark's J.A.R.V.I.S, buil
 ### Prerequisites
 
 - Python 3.8 or higher
+- Node.js 18 or higher
 - Google Chrome browser (for web navigation features)
 - Google Cloud Console account
 - Gmail account with App Password
@@ -26,42 +27,47 @@ A sophisticated AI personal assistant inspired by Tony Stark's J.A.R.V.I.S, buil
 
 1. **Clone the repository**
 
-   ```bash
    git clone https://github.com/yourusername/jarvis-assistant.git
    cd jarvis-assistant
-   ```
+   2. **Set up Python environment**
 
-2. **Create and activate virtual environment**
+   
+   # Create and activate virtual environment
+   python -m venv venv
+   source venv/bin/activate  # On Windows: ai\Scripts\activate
 
-   ```bash
-   python -m venv ai
-   source ai/bin/activate  # On Windows: ai\Scripts\activate
-   ```
-
-3. **Install dependencies**
-
-   ```bash
+   # Install Python dependencies
    pip install -r requirements.txt
-   ```
+   3. **Set up Node.js environment**
 
-4. **Set up environment variables**
+   # Navigate to client directory
+   cd client
 
-   ```bash
+   # Install Node.js dependencies
+   npm install
+
+   # Return to root directory
+   cd ..
+   4. **Set up environment variables**
+
    # Copy the example environment file
    cp .env.example .env
 
    # Edit the .env file with your actual credentials
    nano .env  # or use your preferred editor
-   ```
-
-   **Required variables to configure:**
+      **Required variables to configure:**
 
    - `LIVEKIT_API_KEY` - Your LiveKit Cloud API key
    - `LIVEKIT_API_SECRET` - Your LiveKit Cloud API secret
    - `LIVEKIT_URL` - Your LiveKit Cloud WebSocket URL
    - `GMAIL_USER` - Your Gmail address
    - `GMAIL_APP_PASSWORD` - Your Gmail App Password
+   - `GOOGLE_API_KEY` - Your Google AI Studio API key
    - `GOOGLE_CLOUD_PROJECT_ID` - Your Google Cloud Project ID
+   - `SUPABASE_URL` - Your Supabase project URL
+   - `SUPABASE_ANON_KEY` - Your Supabase anonymous key
+   - `SUPABASE_SERVICE_ROLE_KEY` - Your Supabase service role key
+   - `SECRET_KEY` - Secret key for session management
 
 ## Configuration
 
@@ -83,7 +89,7 @@ A sophisticated AI personal assistant inspired by Tony Stark's J.A.R.V.I.S, buil
 
 3. **Generate Access Token**
 
-   ```bash
+   
    python -c "
    from google_auth_oauthlib.flow import InstalledAppFlow
    from google.oauth2.credentials import Credentials
@@ -96,8 +102,7 @@ A sophisticated AI personal assistant inspired by Tony Stark's J.A.R.V.I.S, buil
        token.write(creds.to_json())
    print('Token generated successfully!')
    "
-   ```
-
+   
    **Note**: After generating the token, you can delete `credentials.json` as the system will use `token.json` for future authentication.
 
 ### 2. Gmail App Password Setup
@@ -122,66 +127,37 @@ A sophisticated AI personal assistant inspired by Tony Stark's J.A.R.V.I.S, buil
 
 ## 🎯 Usage
 
-### Starting JARVIS
+### Starting All Services
 
-1. **Activate the virtual environment**
+The JARVIS Assistant consists of 3 services that need to be running:
 
-   ```bash
-   source venv/bin/activate
-   ```
+1. **Agent Service** (Python) - The main JARVIS AI agent
+2. **Server Service** (FastAPI) - Backend API server
+3. **Client Service** (Next.js) - Frontend web application
 
-2. **Start the JARVIS agent**
+#### Option 1: Run in Separate Terminals
 
-   ```bash
-   python agent.py dev
-   ```
+**Terminal 1 - Agent Service:**
+# Activate virtual environment
+source venv/bin/activate  # On Windows: ai\Scripts\activate
 
-JARVIS will connect to LiveKit Cloud and be ready for voice interactions.
-GO to LiveKit Agent Playground for full experience!!
+# Start the JARVIS agent
+python agent.py dev
 
-## Voice Commands
+**Terminal 2 - Server Service:**
 
-JARVIS responds to natural language commands:
+# Start the FastAPI server
+uvicorn server.main:app --reload
 
-### Calendar Commands
+**Terminal 3 - Client Service:**
+# Navigate to client directory
+cd client
 
-- "Schedule a meeting with John tomorrow at 2pm"
-- "Show my calendar for today"
-- "Reschedule my meeting to 3pm"
-- "Cancel my appointment"
+# Start the Next.js development server
+npm run dev
 
-### Email Commands
+### Accessing the Application
 
-- "Send an email to john@example.com"
-- "Email the team about the project update"
-
-### Web Commands
-
-- "Open YouTube"
-- "Search for Python tutorials"
-- "Go to GitHub"
-
-### Weather Commands
-
-- "What's the weather in London?"
-- "Weather in New York"
-
-## 📁 Project Structure
-
-```
-jarvis-assistant/
-├── agent.py              # Main agent entry point
-├── requirements.txt      # Python dependencies
-├── .env                 # Environment variables (create from .env.example)
-├── token.json           # Google Calendar authentication token
-├── ai/                  # Virtual environment
-├── tools/               # Tool implementations
-│   ├── email_tools.py
-│   ├── google_calendar_tools.py
-│   ├── chrome_tools.py
-│   ├── search_tools.py
-│   └── weather_tools.py
-└── prompts/             # AI prompt configurations
-    ├── core/
-    └── tools/
-```
+Once all services are running:
+- **Frontend**: Open `http://localhost:3000` in your browser
+- **Backend**: Visit `http://localhost:8000` in your browser
