@@ -250,12 +250,20 @@ class GoogleCalendarManager:
                         credentials_dict, SCOPES
                     )
                     
-                    # Refresh if expired
+                    # Refresh if expired and save back to database
                     if self.creds.expired:
                         print(f"🔍 DEBUG: Credentials expired, refreshing...")
                         if self.creds.refresh_token:
                             self.creds.refresh(Request())
                             print(f"🔍 DEBUG: Credentials refreshed successfully")
+                            
+                            # Save refreshed credentials back to database
+                            refreshed_json = self.creds.to_json()
+                            client.table("calendar_credentials").update({
+                                "credentials_json": refreshed_json,
+                                "updated_at": "now()"
+                            }).eq("user_id", self.user_id).execute()
+                            print(f"🔍 DEBUG: Refreshed credentials saved to database")
                         else:
                             print(f"⚠️ WARNING: Credentials expired but no refresh token")
                     
@@ -587,12 +595,16 @@ async def view_calendar_events_google(
 ) -> str:
     """
     View events from Google Calendar for a specific date or date range.
+    Returns a conversational string describing the events that should be spoken directly to the user.
     
     TRIGGER WORDS: show calendar, what's on schedule, check calendar, view events, what's today, next week, this week, upcoming events, events for
     
     Args:
         date: Date or date range to view events for (e.g., "today", "tomorrow", "2024-01-15", "next week", "this week"). Defaults to today.
         max_results: Maximum number of events to return (default: 10)
+    
+    Returns:
+        A string describing the events in natural language that should be spoken to the user.
     """
     try:
         # Get room name using helper function
@@ -605,6 +617,10 @@ async def view_calendar_events_google(
         logging.info(f"Viewing Google Calendar events for {date or 'today'}")
         
         manager = get_calendar_manager(room_name)
+        
+        # Verify manager has service (CRITICAL - was missing!)
+        if not manager.service:
+            raise Exception("Calendar service not initialized. Check credentials.")
         
         # Get timezone for date parsing
         user_tz = ZoneInfo(manager.timezone) if manager.timezone else ZoneInfo('UTC')
@@ -620,10 +636,6 @@ async def view_calendar_events_google(
             target_date = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
         else:
             target_date = datetime.now(user_tz).replace(hour=0, minute=0, second=0, microsecond=0)
-        
-        # Determine if this is a date range query
-        is_range_query = False
-        date_lower = date.lower().strip() if date else ""
         
         # Check for range queries FIRST, before single day logic
         if 'next week' in date_lower:
@@ -690,21 +702,32 @@ async def view_calendar_events_google(
                 title = event.get('summary', 'No Title')
                 # Include date for range queries
                 if is_range_query:
-                    event_list.append(f"{start_time.strftime('%B %d at %I:%M %p')} - {title}")
+                    formatted_time = start_time.strftime('%B %d at %I:%M %p')
+                    event_list.append(f"{formatted_time} - {title}")
                 else:
-                    event_list.append(f"{start_time.strftime('%I:%M %p')} - {title}")
+                    formatted_time = start_time.strftime('%I:%M %p')
+                    event_list.append(f"{formatted_time} - {title}")
             else:
                 # All-day event
                 title = event.get('summary', 'No Title')
                 event_list.append(f"All day - {title}")
         
-        result = f"📅 Events for {range_description}, Sir ({len(events)} total):\n" + "\n".join(event_list)
+        # Create a natural, conversational response that the agent will speak
+        if len(events) == 1:
+            result = f"You have one event {range_description}, Sir: {event_list[0]}"
+        else:
+            events_text = ", ".join(event_list)
+            result = f"You have {len(events)} events {range_description}, Sir: {events_text}"
+        
         print(f"📅 SUCCESS: Found {len(events)} events")
+        print(f"🔍 DEBUG: Returning result: {result}")
         return result
         
     except Exception as e:
         print(f"📅 ERROR: {e}")
         logging.error(f"Error viewing Google Calendar events: {e}")
+        import traceback
+        traceback.print_exc()
         return f"Failed to retrieve calendar events: {str(e)}"
 
 @function_tool()
@@ -731,18 +754,20 @@ async def update_calendar_event_google(
         location: New location (optional)
     """
     try:
-        # Try to get room name from context
-        room_name = None
-        try:
-            if hasattr(context, 'room') and hasattr(context.room, 'name'):
-                room_name = context.room.name
-        except:
-            pass
+        # Get room name using helper function (same as other calendar functions)
+        room_name = get_room_name_from_context(context)
+        
+        if not room_name:
+            print("⚠️ WARNING: Could not extract room name. Will try to use fallback credentials.")
         
         print(f"📅 JARVIS GOOGLE CALENDAR: Updating event {event_id}")
         logging.info(f"Updating Google Calendar event: {event_id}")
         
         manager = get_calendar_manager(room_name)
+        
+        # Verify manager has service
+        if not manager.service:
+            raise Exception("Calendar service not initialized. Check credentials.")
         
         # Get existing event
         event = manager.service.events().get(
@@ -786,43 +811,125 @@ async def update_calendar_event_google(
 @function_tool()
 async def delete_calendar_event_google(
     context: RunContext,  # type: ignore
-    event_id: str
+    event_id: str,
+    event_title: Optional[str] = None
 ) -> str:
     """
     Delete an event from Google Calendar.
     
-    TRIGGER WORDS: cancel, delete meeting, remove appointment
+    TRIGGER WORDS: cancel, delete meeting, remove appointment, delete event
     
     Args:
-        event_id: The ID of the event to delete
+        event_id: The ID of the event to delete (if known). If not provided, event_title will be used to search.
+        event_title: The title/name of the event to delete. Used if event_id is not provided or looks like a title.
     """
     try:
-        # Try to get room name from context
-        room_name = None
-        try:
-            if hasattr(context, 'room') and hasattr(context.room, 'name'):
-                room_name = context.room.name
-        except:
-            pass
+        # Get room name using helper function (same as other calendar functions)
+        room_name = get_room_name_from_context(context)
         
-        print(f"📅 JARVIS GOOGLE CALENDAR: Deleting event {event_id}")
-        logging.info(f"Deleting Google Calendar event: {event_id}")
+        if not room_name:
+            print("⚠️ WARNING: Could not extract room name. Will try to use fallback credentials.")
         
         manager = get_calendar_manager(room_name)
         
-        # Delete event
+        # Verify manager has service
+        if not manager.service:
+            raise Exception("Calendar service not initialized. Check credentials.")
+        
+        # Determine if event_id is actually a title or a real event ID
+        # Event IDs are typically long alphanumeric strings without spaces
+        # Titles usually have spaces and are more readable
+        actual_event_id = None
+        search_title = None
+        
+        # If event_title is provided, use it for search
+        if event_title:
+            search_title = event_title
+        # If event_id looks like a title (has spaces or is short), treat it as a title
+        elif ' ' in event_id or len(event_id) < 20:
+            search_title = event_id
+        else:
+            # Looks like a real event ID
+            actual_event_id = event_id
+        
+        # If we need to search by title
+        if search_title:
+            print(f"📅 JARVIS GOOGLE CALENDAR: Searching for event with title '{search_title}'")
+            logging.info(f"Searching for event to delete: {search_title}")
+            
+            # Get timezone for date parsing
+            user_tz = ZoneInfo(manager.timezone) if manager.timezone else ZoneInfo('UTC')
+            
+            # Search for events in the next 30 days (reasonable window for finding events)
+            now = datetime.now(user_tz)
+            time_min = now - timedelta(days=7)  # Look back 7 days
+            time_max = now + timedelta(days=30)  # Look forward 30 days
+            
+            time_min_utc = time_min.astimezone(ZoneInfo('UTC'))
+            time_max_utc = time_max.astimezone(ZoneInfo('UTC'))
+            
+            # Search for events matching the title
+            events_result = manager.service.events().list(
+                calendarId='primary',
+                timeMin=time_min_utc.isoformat().replace('+00:00', 'Z'),
+                timeMax=time_max_utc.isoformat().replace('+00:00', 'Z'),
+                maxResults=50,
+                singleEvents=True,
+                orderBy='startTime',
+                q=search_title  # Search query for title
+            ).execute()
+            
+            events = events_result.get('items', [])
+            
+            # Filter events that match the title (case-insensitive partial match)
+            matching_events = [
+                event for event in events
+                if search_title.lower() in event.get('summary', '').lower()
+            ]
+            
+            if not matching_events:
+                return f"No event found with title '{search_title}', Sir. Please check the event name and try again."
+            
+            if len(matching_events) > 1:
+                # Multiple events found - delete the most recent one (or all?)
+                # For now, let's delete the first upcoming one
+                event_to_delete = matching_events[0]
+                actual_event_id = event_to_delete['id']
+                event_title_found = event_to_delete.get('summary', search_title)
+                print(f"⚠️ WARNING: Found {len(matching_events)} events with similar title. Deleting the first match: '{event_title_found}'")
+            else:
+                # Exactly one match
+                event_to_delete = matching_events[0]
+                actual_event_id = event_to_delete['id']
+                event_title_found = event_to_delete.get('summary', search_title)
+                print(f"🔍 DEBUG: Found event '{event_title_found}' with ID: {actual_event_id}")
+        else:
+            # Using provided event_id directly
+            actual_event_id = event_id
+            print(f"📅 JARVIS GOOGLE CALENDAR: Deleting event with ID {actual_event_id}")
+        
+        # Delete the event
+        logging.info(f"Deleting Google Calendar event: {actual_event_id}")
         manager.service.events().delete(
             calendarId='primary',
-            eventId=event_id
+            eventId=actual_event_id
         ).execute()
         
+        event_name = search_title if search_title else actual_event_id
         print(f"📅 SUCCESS: Event deleted")
-        return f"Event deleted successfully, Sir."
+        return f"Event '{event_name}' deleted successfully, Sir."
         
     except Exception as e:
-        print(f"📅 ERROR: {e}")
+        error_msg = str(e)
+        print(f"📅 ERROR: {error_msg}")
         logging.error(f"Error deleting Google Calendar event: {e}")
-        return f"Failed to delete event: {str(e)}"
+        import traceback
+        traceback.print_exc()
+        
+        # Provide more helpful error messages
+        if "404" in error_msg or "Not Found" in error_msg:
+            return f"Event not found, Sir. The event may have already been deleted or the name/ID is incorrect."
+        return f"Failed to delete event: {error_msg}"
 
 @function_tool()
 async def list_all_events_google(
@@ -838,18 +945,20 @@ async def list_all_events_google(
         max_results: Maximum number of events to return (default: 50)
     """
     try:
-        # Try to get room name from context
-        room_name = None
-        try:
-            if hasattr(context, 'room') and hasattr(context.room, 'name'):
-                room_name = context.room.name
-        except:
-            pass
+        # Get room name using helper function (same as other calendar functions)
+        room_name = get_room_name_from_context(context)
+        
+        if not room_name:
+            print("⚠️ WARNING: Could not extract room name. Will try to use fallback credentials.")
         
         print(f"📅 JARVIS GOOGLE CALENDAR: Listing all events")
         logging.info(f"Listing all Google Calendar events")
         
         manager = get_calendar_manager(room_name)
+        
+        # Verify manager has service
+        if not manager.service:
+            raise Exception("Calendar service not initialized. Check credentials.")
         
         # Get timezone for date parsing
         user_tz = ZoneInfo(manager.timezone) if manager.timezone else ZoneInfo('UTC')

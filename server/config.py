@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     GOOGLE_CLOUD_PROJECT_ID: str = ""
     GOOGLE_CLIENT_ID: str = ""  # Add missing field
     GOOGLE_CLIENT_SECRET: str = ""  # Add missing field
-    OAUTH_REDIRECT_URI: str = "http://localhost:8000/api/auth/google/calendar/callback"
+    OAUTH_REDIRECT_URI: str = ""
     
     CORS_ORIGINS: List[str] = [
         "http://localhost:3000",  # Next.js dev server

@@ -15,6 +15,7 @@ import { createRoom } from "@/lib/api";
 import { connectToRoom, setupAudioHandlers } from "@/lib/livekit";
 import { Room } from "livekit-client";
 import api from "@/lib/api";
+import GmailAuth from "@/components/gmail-auth";
 
 export default function Dashboard() {
   const { user, loading } = useAuth();
@@ -27,6 +28,7 @@ export default function Dashboard() {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [calendarConnected, setCalendarConnected] = useState(false);
   const [calendarConnecting, setCalendarConnecting] = useState(false);
+  const [gmailConnected, setGmailConnected] = useState(false);
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -126,6 +128,29 @@ export default function Dashboard() {
     }
   }, []);
 
+  useEffect(() => {
+    if (user) {
+      checkGmailStatus();
+    }
+  }, [user]);
+
+  const checkGmailStatus = async () => {
+    try {
+      const response = await api.get("/api/auth/gmail/status");
+      setGmailConnected(response.data.authenticated);
+    } catch (error) {
+      setGmailConnected(false);
+    }
+  };
+
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get("gmail_auth") === "success") {
+      checkGmailStatus();
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
+
   if (loading || !user) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center overflow-hidden">
@@ -205,6 +230,38 @@ export default function Dashboard() {
               "📅 CALENDAR"
             )}
           </Button>
+
+          {/* Add Gmail button here */}
+          <Button
+            onClick={async () => {
+              if (gmailConnected) {
+                setActiveModal("gmail");
+                return;
+              }
+              try {
+                const response = await api.get("/api/auth/google/gmail");
+                window.location.href = response.data.authorization_url;
+              } catch (error) {
+                console.error("Error connecting Gmail:", error);
+                alert("Failed to connect Gmail. Please try again.");
+              }
+            }}
+            className={`bg-cyan-500/20 border text-cyan-300 hover:bg-cyan-500/30 font-mono text-xs transition-all ${
+              gmailConnected
+                ? "border-green-400 bg-green-500/20 hover:bg-green-500/30"
+                : "border-cyan-400"
+            }`}
+          >
+            {gmailConnected ? (
+              <>
+                <span className="w-2 h-2 bg-green-400 rounded-full inline-block mr-2 animate-pulse" />
+                GMAIL
+              </>
+            ) : (
+              "�� GMAIL"
+            )}
+          </Button>
+
           <Button
             onClick={() => setActiveModal("integration")}
             className="bg-cyan-500/20 border border-cyan-400 text-cyan-300 hover:bg-cyan-500/30 font-mono text-xs"
@@ -249,10 +306,6 @@ export default function Dashboard() {
             onClose={() => setActiveModal(null)}
           />
         </div>
-
-        <div className="absolute bottom-20 left-1/2 -translate-x-1/2">
-          <CalendarAuth />
-        </div>
       </div>
 
       {/* Integration Modal */}
@@ -269,10 +322,21 @@ export default function Dashboard() {
             className="absolute inset-0 bg-black/80 backdrop-blur-sm"
             onClick={() => setActiveModal(null)}
           />
+          <CalendarAuth />
+        </div>
+      )}
+
+      {/* Gmail Modal */}
+      {activeModal === "gmail" && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-auto">
+          <div
+            className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+            onClick={() => setActiveModal(null)}
+          />
           <div className="relative w-full max-w-md mx-4 bg-black/95 border-2 border-cyan-400/50 rounded-lg p-8 glow-box">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-cyan-400 font-mono text-xl font-bold">
-                CALENDAR
+                GMAIL
               </h2>
               <Button
                 onClick={() => setActiveModal(null)}
@@ -283,13 +347,13 @@ export default function Dashboard() {
                 ×
               </Button>
             </div>
-            <CalendarAuth />
+            <GmailAuth />
           </div>
         </div>
       )}
 
       {/* Navigation buttons around core */}
-      <div className="absolute inset-0 pointer-events-none z-30">
+      {/* <div className="absolute inset-0 pointer-events-none z-30">
         <div className="absolute top-[20%] left-1/2 -translate-x-1/2">
           <Button
             onClick={() =>
@@ -322,7 +386,7 @@ export default function Dashboard() {
             STATUS
           </Button>
         </div>
-      </div>
+      </div> */}
     </div>
   );
 }

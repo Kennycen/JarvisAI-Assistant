@@ -21,8 +21,8 @@ SCOPES = [
 
 
 def build_google_client_config(redirect_uri: str, state: str | None = None) -> Dict[str, Any]:
-    client_id = os.getenv("GOOGLE_CLIENT_ID")
-    client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+    client_id = settings.GOOGLE_CLIENT_ID
+    client_secret = settings.GOOGLE_CLIENT_SECRET
 
     if not client_id or not client_secret:
         raise HTTPException(status_code=500, detail="Google OAuth client env vars missing")
@@ -181,4 +181,177 @@ async def disconnect_calendar(current_user: dict = Depends(get_current_user)):
         return JSONResponse({"status": "disconnected"})
     except Exception as e:
         logger.error(f"Error disconnecting calendar: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Add Gmail scopes (add after line 20, or create separate GMAIL_SCOPES)
+GMAIL_SCOPES = [
+    'openid',
+    'https://www.googleapis.com/auth/userinfo.email',
+    'https://www.googleapis.com/auth/userinfo.profile',
+    'https://www.googleapis.com/auth/gmail.send',  # Send emails
+    'https://www.googleapis.com/auth/gmail.compose',  # Compose emails
+]
+
+# Add helper function for Gmail OAuth (after build_google_client_config)
+def build_gmail_client_config(redirect_uri: str, state: str | None = None) -> Dict[str, Any]:
+    client_id = settings.GOOGLE_CLIENT_ID
+    client_secret = settings.GOOGLE_CLIENT_SECRET
+
+    if not client_id or not client_secret:
+        raise HTTPException(status_code=500, detail="Google OAuth client env vars missing")
+
+    config = {
+        "web": {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "redirect_uris": [redirect_uri],
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+        }
+    }
+
+    flow = Flow.from_client_config(
+        config,
+        scopes=GMAIL_SCOPES,
+        redirect_uri=redirect_uri,
+        state=state,
+    )
+    return flow
+
+# Add Gmail OAuth endpoints (after disconnect_calendar endpoint)
+@router.get("/google/gmail")
+async def google_gmail_auth(
+    request: Request,
+    current_user: dict = Depends(get_current_user)
+):
+    """Initiate Gmail OAuth flow for authenticated user"""
+    try:
+        os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+        redirect_uri = "http://localhost:8000/api/auth/google/gmail/callback"
+
+        flow = build_gmail_client_config(redirect_uri)
+        authorization_url, state = flow.authorization_url(
+            access_type='offline',
+            include_granted_scopes='true',
+            prompt='consent'
+        )
+
+        client = SupabaseService.get_client()
+        client.table("oauth_states").insert({
+            "state": state,
+            "user_id": current_user['user_id']
+        }).execute()
+
+        logger.info(f"Stored Gmail OAuth state {state} for user {current_user['user_id']}")
+
+        return JSONResponse({"authorization_url": authorization_url})
+    except Exception as e:
+        logger.error(f"Gmail OAuth initiation error: {e}")
+        raise HTTPException(status_code=500, detail=f"OAuth error: {str(e)}")
+
+
+@router.get("/google/gmail/callback")
+async def google_gmail_callback(
+    request: Request,
+    code: str | None = None,
+    state: str | None = None
+):
+    """Handle Gmail OAuth callback"""
+    if not code:
+        return RedirectResponse(
+            url=f"{settings.FRONTEND_URL}?gmail_auth=error&message=no_code"
+        )
+
+    if not state:
+        return RedirectResponse(
+            url=f"{settings.FRONTEND_URL}?gmail_auth=error&message=no_state"
+        )
+
+    try:
+        client = SupabaseService.get_client()
+        state_response = client.table("oauth_states").select("*").eq("state", state).execute()
+
+        if not state_response.data:
+            logger.error(f"State {state} not found in database")
+            return RedirectResponse(
+                url=f"{settings.FRONTEND_URL}?gmail_auth=error&message=invalid_state"
+            )
+
+        state_data = state_response.data[0]
+        user_id = state_data['user_id']
+
+        client.table("oauth_states").delete().eq("state", state).execute()
+
+        logger.info(f"Verified Gmail OAuth state {state} for user {user_id}")
+
+    except Exception as e:
+        logger.error(f"Error verifying state: {e}")
+        return RedirectResponse(
+            url=f"{settings.FRONTEND_URL}?gmail_auth=error&message=state_verification_failed"
+        )
+
+    try:
+        os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+        redirect_uri = "http://localhost:8000/api/auth/google/gmail/callback"
+
+        flow = build_gmail_client_config(redirect_uri, state=state)
+
+        full_url = str(request.url)
+        flow.fetch_token(authorization_response=full_url)
+        credentials = flow.credentials
+
+        credentials_json = credentials.to_json()
+        success = await SupabaseService.save_email_credentials(
+            user_id,
+            credentials_json
+        )
+
+        if not success:
+            return RedirectResponse(
+                url=f"{settings.FRONTEND_URL}?gmail_auth=error&message=save_failed"
+            )
+
+        return RedirectResponse(
+            url=f"{settings.FRONTEND_URL}?gmail_auth=success"
+        )
+
+    except Exception as e:
+        logger.error(f"Gmail OAuth callback error: {e}")
+        return RedirectResponse(
+            url=f"{settings.FRONTEND_URL}?gmail_auth=error&message={str(e)}"
+        )
+
+
+@router.get("/gmail/status")
+async def gmail_status(current_user: dict = Depends(get_current_user)):
+    """Check if user has Gmail credentials"""
+    try:
+        credentials = await SupabaseService.get_email_credentials(
+            current_user['user_id']
+        )
+
+        if credentials:
+            return JSONResponse({
+                "authenticated": True,
+                "email": current_user.get('email')
+            })
+        else:
+            return JSONResponse({"authenticated": False})
+    except Exception as e:
+        logger.error(f"Error checking Gmail status: {e}")
+        return JSONResponse({"authenticated": False})
+
+
+@router.post("/gmail/disconnect")
+async def disconnect_gmail(current_user: dict = Depends(get_current_user)):
+    """Disconnect Gmail credentials"""
+    try:
+        client = SupabaseService.get_client()
+        client.table("email_credentials").delete().eq(
+            "user_id", current_user['user_id']
+        ).execute()
+
+        return JSONResponse({"status": "disconnected"})
+    except Exception as e:
+        logger.error(f"Error disconnecting Gmail: {e}")
         raise HTTPException(status_code=500, detail=str(e))

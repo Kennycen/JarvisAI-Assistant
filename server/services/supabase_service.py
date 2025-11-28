@@ -61,6 +61,11 @@ class SupabaseService:
                     "authenticated": True
                 }
             
+            # If 401, token is expired or invalid
+            if response.status_code == 401:
+                logger.warning("Token verification failed: 401 Unauthorized - token expired or invalid")
+                return {"authenticated": False}
+            
             # If that fails, try decoding JWT directly
             # Supabase JWT secret is in Project Settings → API → JWT Secret
             # For now, we'll decode without verification (Supabase already verified it)
@@ -70,6 +75,13 @@ class SupabaseService:
                     token,
                     options={"verify_signature": False}  # Skip signature verification
                 )
+                
+                # Check if token is expired
+                import time
+                exp = payload.get("exp")
+                if exp and exp < time.time():
+                    logger.warning("Token is expired according to JWT payload")
+                    return {"authenticated": False}
                 
                 # Extract user info from payload
                 user_id = payload.get("sub")
@@ -128,4 +140,44 @@ class SupabaseService:
             return True
         except Exception as e:
             logger.error(f"Error saving calendar credentials: {e}")
+            return False
+    
+    @classmethod
+    async def get_email_credentials(cls, user_id: str) -> dict:
+        """Get user's email credentials from database"""
+        try:
+            client = cls.get_client()
+            response = client.table("email_credentials").select("*").eq("user_id", user_id).execute()
+            
+            if response.data and len(response.data) > 0:
+                return response.data[0]
+            return None
+        except Exception as e:
+            logger.error(f"Error fetching email credentials: {e}")
+            return None
+    
+    @classmethod
+    async def save_email_credentials(cls, user_id: str, credentials_json: str):
+        """Save or update user's email credentials"""
+        try:
+            client = cls.get_client()
+            # Check if record exists
+            existing = client.table("email_credentials").select("*").eq("user_id", user_id).execute()
+            
+            if existing.data and len(existing.data) > 0:
+                # Update existing
+                client.table("email_credentials").update({
+                    "credentials_json": credentials_json,
+                    "updated_at": "now()"
+                }).eq("user_id", user_id).execute()
+            else:
+                # Insert new
+                client.table("email_credentials").insert({
+                    "user_id": user_id,
+                    "credentials_json": credentials_json
+                }).execute()
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error saving email credentials: {e}")
             return False
