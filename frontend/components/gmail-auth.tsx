@@ -6,7 +6,11 @@ import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import api from "@/lib/api";
 
-export default function GmailAuth() {
+interface GmailAuthProps {
+  onStatusChange?: () => void;
+}
+
+export default function GmailAuth({ onStatusChange }: GmailAuthProps) {
   const { user } = useAuth();
   const searchParams = useSearchParams();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -32,7 +36,13 @@ export default function GmailAuth() {
   const checkAuthStatus = async () => {
     try {
       const response = await api.get("/api/auth/gmail/status");
+      const wasAuthenticated = isAuthenticated;
       setIsAuthenticated(response.data.authenticated);
+
+      // Notify parent if status changed
+      if (wasAuthenticated !== response.data.authenticated && onStatusChange) {
+        onStatusChange();
+      }
     } catch (error) {
       console.error("Error checking Gmail auth status:", error);
       setIsAuthenticated(false);
@@ -59,6 +69,10 @@ export default function GmailAuth() {
     try {
       await api.post("/api/auth/gmail/disconnect");
       setIsAuthenticated(false);
+      // Notify parent of status change
+      if (onStatusChange) {
+        onStatusChange();
+      }
     } catch (error) {
       console.error("Error disconnecting:", error);
       alert("Failed to disconnect. Please try again.");
